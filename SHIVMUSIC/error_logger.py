@@ -18,8 +18,8 @@ from functools import wraps
 from typing import Any, Optional
 
 import config
-from ftmgram import Client
-from ftmgram.enums import ParseMode
+from pyrogram import Client
+from pyrogram.enums import ParseMode
 
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
