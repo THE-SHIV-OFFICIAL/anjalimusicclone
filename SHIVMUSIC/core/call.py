@@ -18,6 +18,8 @@ import config
 from SHIVMUSIC import LOGGER, YouTube, app, userbot
 from SHIVMUSIC.misc import db
 from SHIVMUSIC.utils.database import (
+    get_active_chats,
+    is_music_playing,
     add_active_chat,
     add_active_video_chat,
     get_lang,
@@ -105,6 +107,7 @@ async def _clear_(chat_id):
     await remove_active_video_chat(chat_id)
     await remove_active_chat(chat_id)
 
+
 class Call:
     def __init__(self):
         # Reuse the assistant clients that Userbot owns. Creating another
@@ -135,6 +138,8 @@ class Call:
 
         self.custom_assistants = {} 
         self.active_clients = {} 
+        self._watchdog_task = None
+        self._watchdog_state = {}
         self._started_calls = []
         self._setup_event_handlers()
 
@@ -849,7 +854,108 @@ class Call:
         if getattr(config, "STRING4", None): pings.append(self.four.ping)
         if getattr(config, "STRING5", None): pings.append(self.five.ping)
         return pings
+    
+    async def _recover_stalled_stream(self, chat_id: int):
+        """Stuck stream ko stop karke next track start karta hai."""
+        try:
+            assistants = await self.get_active_clients(chat_id)
+            assistant = assistants[0] if assistants else self.one
 
+            LOGGER(__name__).warning(
+                "Stream stalled in chat %s. Advancing to next track.",
+                chat_id,
+            )
+
+            await asyncio.wait_for(
+                self.change_stream(assistant, chat_id),
+                timeout=60,
+            )
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            LOGGER(__name__).exception(
+                "Could not recover stalled stream in chat %s",
+                chat_id,
+            )
+
+
+    async def _stream_watchdog(self):
+        """Playback progress rukne par stream recover karta hai."""
+        interval = config.STREAM_WATCHDOG_INTERVAL
+        timeout = config.STREAM_WATCHDOG_TIMEOUT
+
+        while True:
+            await asyncio.sleep(interval)
+
+            try:
+                active_chats = await get_active_chats()
+                active_ids = set()
+
+                for raw_chat_id in active_chats:
+                    chat_id = int(raw_chat_id)
+                    active_ids.add(chat_id)
+
+                    if not await is_music_playing(chat_id):
+                        self._watchdog_state.pop(chat_id, None)
+                        continue
+
+                    playing = db.get(chat_id)
+
+                    if not playing:
+                        self._watchdog_state.pop(chat_id, None)
+                        continue
+
+                    current = playing[0]
+                    played = int(
+                        current.get("played", 0) or 0
+                    )
+
+                    track_id = (
+                        id(current),
+                        str(current.get("vidid")),
+                        str(current.get("file")),
+                    )
+
+                    now = time.monotonic()
+                    previous = self._watchdog_state.get(chat_id)
+
+                    # Naya track ya playback progress change hua.
+                    if (
+                        previous is None
+                        or previous["track_id"] != track_id
+                        or played > previous["played"]
+                    ):
+                        self._watchdog_state[chat_id] = {
+                            "track_id": track_id,
+                            "played": played,
+                            "checked_at": now,
+                        }
+                        continue
+
+                    # Progress timeout se zyada der tak same raha.
+                    if now - previous["checked_at"] >= timeout:
+                        self._watchdog_state[chat_id] = {
+                            "track_id": track_id,
+                            "played": played,
+                            "checked_at": now,
+                        }
+
+                        await self._recover_stalled_stream(chat_id)
+
+                # Jo chats active nahi rahe unka old state remove karo.
+                for chat_id in set(self._watchdog_state) - active_ids:
+                    self._watchdog_state.pop(chat_id, None)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                LOGGER(__name__).exception(
+                    "Stream watchdog loop failed"
+                )
+                
     async def start(self):
         LOGGER(__name__).info("Starting PyTgCalls Client...\n")
         for client in [self.one, self.two, self.three, self.four, self.five]:
@@ -860,10 +966,24 @@ class Call:
                 self._started_calls.append(client)
             except Exception:
                 LOGGER(__name__).exception("Failed to start one PyTgCalls assistant")
+        
         if not self._started_calls:
             raise RuntimeError("No PyTgCalls assistant could be started")
+            
+        self._watchdog_task = asyncio.create_task(
+            self._stream_watchdog(),
+            name="shivmusic-stream-watchdog",
+        )
 
     async def stop(self):
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
+            
         for client in reversed(self._started_calls):
             try:
                 await client.stop()
