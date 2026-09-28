@@ -8,12 +8,11 @@ from SHIVMUSIC import app
 from SHIVMUSIC.misc import SUDOERS
 from SHIVMUSIC.utils import get_readable_time
 from SHIVMUSIC.utils.database import (
-    add_banned_user,
-    get_banned_count,
+    add_gban_user,
+    get_gbanned,
     get_banned_users,
-    get_served_chats,
-    is_banned_user,
-    remove_banned_user,
+    is_gbanned_user,
+    remove_gban_user,
 )
 from SHIVMUSIC.utils.decorators.language import language
 from SHIVMUSIC.utils.extraction import extract_user
