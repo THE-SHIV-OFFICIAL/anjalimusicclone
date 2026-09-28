@@ -80,8 +80,11 @@ async def _run_application():
     for all_module in ALL_MODULES:
         importlib.import_module("SHIVMUSIC.plugins" + all_module)
     LOGGER("SHIVMUSIC.plugins").info("𝐀𝐥𝐥 𝐅𝐞𝐚𝐭𝐮𝐫𝐞𝐬 𝐋𝐨𝐚𝐝𝐞𝐝 𝐁𝐚𝐛𝐲🥳...")
+    
+    # 🟢 Assistant Telegram clients always start before PyTgCalls
     await userbot.start()
     await ANJALI.start()
+    
     try:
         # Do not require a live voice chat in the logger group during boot.
         pass
@@ -99,7 +102,105 @@ async def _run_application():
     LOGGER("SHIVMUSIC").info(
         "╔═════ஜ۩۞۩ஜ════╗\n  ☠︎︎𝗠𝗔𝗗𝗘 𝗕𝗬 THE SHIV𝘀☠︎︎\n╚═════ஜ۩۞۩ஜ════╝"
     )
-    await idle()
+    
+    # ==========================================
+    # 🟢 HEALTH MONITOR SETUP (Replaced idle())
+    # ==========================================
+    async def health_monitor():
+        failures = 0
+
+        while True:
+            await asyncio.sleep(
+                config.HEALTHCHECK_INTERVAL
+            )
+
+            try:
+                if not app.is_connected:
+                    raise RuntimeError(
+                        "Main Telegram client is disconnected"
+                    )
+
+                await asyncio.wait_for(
+                    app.get_me(),
+                    timeout=config.HEALTHCHECK_TIMEOUT,
+                )
+
+                assistants = (
+                    (config.STRING1, userbot.one),
+                    (config.STRING2, userbot.two),
+                    (config.STRING3, userbot.three),
+                    (config.STRING4, userbot.four),
+                )
+
+                for session, assistant in assistants:
+                    if not session:
+                        continue
+
+                    if not assistant.is_connected:
+                        raise RuntimeError(
+                            "Enabled assistant is disconnected"
+                        )
+
+                    await asyncio.wait_for(
+                        assistant.get_me(),
+                        timeout=config.HEALTHCHECK_TIMEOUT,
+                    )
+
+                failures = 0
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as error:
+                failures += 1
+
+                LOGGER("SHIVMUSIC.health").warning(
+                    "Health check failed (%s/%s): %s",
+                    failures,
+                    config.HEALTHCHECK_FAILURES,
+                    error,
+                )
+
+                if failures >= config.HEALTHCHECK_FAILURES:
+                    raise RuntimeError(
+                        "Telegram connection failed repeatedly; "
+                        "restarting process"
+                    ) from error
+
+    idle_task = asyncio.create_task(
+        idle(),
+        name="shivmusic-pyrogram-idle",
+    )
+
+    health_task = asyncio.create_task(
+        health_monitor(),
+        name="shivmusic-health-monitor",
+    )
+
+    done, pending = await asyncio.wait(
+        {idle_task, health_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    try:
+        for task in done:
+            if not task.cancelled():
+                error = task.exception()
+
+                if error:
+                    raise error
+
+    finally:
+        for task in pending:
+            task.cancel()
+
+        if pending:
+            await asyncio.gather(
+                *pending,
+                return_exceptions=True,
+            )
+    # ==========================================
+
     await app.stop()
     await ANJALI.stop()
     await userbot.stop()
