@@ -18,7 +18,8 @@ from functools import wraps
 from typing import Any, Optional
 
 import config
-from pyrogram import Client
+from ftmgram import Client
+from ftmgram.enums import ParseMode
 
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
@@ -33,8 +34,6 @@ _main_client: Any = None
 _logging_handler_installed = False
 _global_hooks_installed = False
 _loop_handlers: set[int] = set()
-_reported_log_keys: dict[tuple[str, str], float] = {}
-_LOG_DEDUP_SECONDS = 10
 
 
 def _safe_text(value: Any, limit: int = 600) -> str:
@@ -152,7 +151,11 @@ async def report_exception(
     if target is None:
         return
 
-    logger_id = getattr(config, "ERROR_LOGGER_ID", -1004392214389)
+    # Prefer the dedicated error group, but fall back to the normal logger
+    # when deployments only configured LOGGER_ID.
+    logger_id = getattr(config, "ERROR_LOGGER_ID", 0) or getattr(
+        config, "LOGGER_ID", 0
+    )
     if not logger_id:
         return
 
@@ -197,7 +200,7 @@ async def report_exception(
                 await target.send_message(
                     chat_id=logger_id,
                     text=message,
-                    parse_mode="html",
+                    parse_mode=ParseMode.HTML,
                     disable_web_page_preview=True,
                 )
             except Exception as send_error:
@@ -217,25 +220,6 @@ async def _report_log_record(client: Any, record: logging.LogRecord) -> None:
     if getattr(record, "_shivmusic_error_report", False):
         return
 
-    # A single failure is often logged by several layers (for example by
-    # Pyrogram and by the application's wrapper). Do not flood the Telegram
-    # error group with identical reports.
-    try:
-        log_key = (record.name, record.getMessage())
-        now = asyncio.get_running_loop().time()
-        previous = _reported_log_keys.get(log_key)
-        _reported_log_keys[log_key] = now
-        if previous is not None and now - previous < _LOG_DEDUP_SECONDS:
-            return
-        if len(_reported_log_keys) > 1000:
-            cutoff = now - _LOG_DEDUP_SECONDS
-            for key, timestamp in list(_reported_log_keys.items()):
-                if timestamp < cutoff:
-                    _reported_log_keys.pop(key, None)
-    except Exception:
-        # Logging must never become the source of another application error.
-        pass
-
     if record.exc_info and record.exc_info[1] is not None:
         exception = record.exc_info[1]
     else:
@@ -249,25 +233,12 @@ async def _report_log_record(client: Any, record: logging.LogRecord) -> None:
 
 
 def _schedule(coroutine: Any) -> None:
-    """Schedule a coroutine when a loop is running, otherwise close it.
-
-    Logging can happen during synchronous import/startup as well as inside the
-    async bot loop. Closing an unscheduled coroutine avoids the
-    ``coroutine was never awaited`` warning that used to hide the real error.
-    """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        close = getattr(coroutine, "close", None)
-        if close:
-            close()
         return
     if loop.is_running():
         loop.create_task(coroutine)
-    else:
-        close = getattr(coroutine, "close", None)
-        if close:
-            close()
 
 
 class TelegramErrorLogHandler(logging.Handler):
@@ -275,8 +246,6 @@ class TelegramErrorLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.levelno < ERROR_LEVEL:
-            return
-        if getattr(record, "_shivmusic_error_report", False):
             return
         client = _current_client.get() or _main_client
         if client is not None:
@@ -424,11 +393,6 @@ class ErrorLoggingClient(Client):
         return super().add_handler(guard_handler(handler), group)
 
     async def start(self, *args: Any, **kwargs: Any):
+        result = await super().start(*args, **kwargs)
         register_error_client(self, getattr(self, "error_logger_name", None))
-        try:
-            return await super().start(*args, **kwargs)
-        except BaseException:
-            # The client is registered before startup so connection/auth
-            # failures are reportable too. The report itself remains guarded
-            # and will simply be skipped if Telegram is not usable yet.
-            raise
+        return result
