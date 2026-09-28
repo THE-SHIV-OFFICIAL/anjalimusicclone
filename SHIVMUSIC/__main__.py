@@ -80,8 +80,8 @@ async def _run_application():
     for all_module in ALL_MODULES:
         importlib.import_module("SHIVMUSIC.plugins" + all_module)
     LOGGER("SHIVMUSIC.plugins").info("𝐀𝐥𝐥 𝐅𝐞𝐚𝐭𝐮𝐫𝐞𝐬 𝐋𝐨𝐚𝐝𝐞𝐝 𝐁𝐚𝐛𝐲🥳...")
-    await ANJALI.start()
     await userbot.start()
+    await ANJALI.start()
     try:
         # Do not require a live voice chat in the logger group during boot.
         pass
