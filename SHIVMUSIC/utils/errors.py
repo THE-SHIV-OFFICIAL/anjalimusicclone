@@ -2,7 +2,7 @@ import sys
 import traceback
 from functools import wraps
 
-from ftmgram.errors.exceptions.forbidden_403 import ChatWriteForbidden
+from pyrogram.errors.exceptions.forbidden_403 import ChatWriteForbidden
 from SHIVMUSIC import app
 from SHIVMUSIC import LOGGER
 
