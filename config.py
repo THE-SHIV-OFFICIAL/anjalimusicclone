@@ -42,8 +42,12 @@ MusicSp_API_KEY = getenv("MusicSp_API_KEY", "sparrowZoBvSEIl6zhvRL4VVn0yql7o")
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 18000))  # slightly increased song length limit
 
 LOGGER_ID = _env_int("LOGGER_ID", 0)
-# All uncaught handler/background errors are sent here. Override with
-# ERROR_LOGGER_ID in the environment when deploying a different log group.
+HEALTHCHECK_INTERVAL = _env_int("HEALTHCHECK_INTERVAL", 60)
+HEALTHCHECK_TIMEOUT = _env_int("HEALTHCHECK_TIMEOUT", 20)
+HEALTHCHECK_FAILURES = _env_int("HEALTHCHECK_FAILURES", 3)
+
+STREAM_WATCHDOG_INTERVAL = _env_int("STREAM_WATCHDOG_INTERVAL", 30)
+STREAM_WATCHDOG_TIMEOUT = _env_int("STREAM_WATCHDOG_TIMEOUT", 180)
 ERROR_LOGGER_ID = _env_int("ERROR_LOGGER_ID", -1004392214389)
 LOGGER_2_ID = _env_int("LOGGER_2_ID", -1003255930328)
 CLONE_LOGGER = LOGGER_ID
