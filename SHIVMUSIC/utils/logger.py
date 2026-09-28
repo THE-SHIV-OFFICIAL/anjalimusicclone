@@ -211,11 +211,11 @@ async def _record_daily_activity(action: str, chat_id: int) -> None:
     try:
         old_stats = await daily_statsdb.find_one({"date": today}) or {}
 
+        # 🟢 FIX: Removed conflicting fields from $setOnInsert
+        # $addToSet will automatically create the array if it doesn't exist!
         update = {
             "$setOnInsert": {
                 "date": today,
-                "added_chat_ids": [],
-                "removed_chat_ids": [],
             },
             "$addToSet": {
                 field: int(chat_id),
@@ -223,9 +223,9 @@ async def _record_daily_activity(action: str, chat_id: int) -> None:
         }
 
         # Preserve old $inc-based counters that may already exist today.
-        if action not in old_stats and old_stats.get(action):
+        if action not in old_stats and isinstance(old_stats.get(action), int):
             update["$set"] = {
-                f"legacy_{action}": int(old_stats.get(action, 0))
+                f"legacy_{action}": old_stats[action]
             }
 
         await daily_statsdb.update_one(
