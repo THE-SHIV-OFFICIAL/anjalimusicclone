@@ -200,22 +200,45 @@ def _is_leave_status(status):
     return status in {"left", "kicked", "banned"}
 
 
-async def _record_daily_activity(action: str) -> None:
-    """Atomically increment today's BData add/remove counter."""
+async def _record_daily_activity(action: str, chat_id: int) -> None:
+    """Record one unique chat action per day."""
+    if action not in {"added", "removed"}:
+        raise ValueError("Invalid daily activity action")
+
     today = datetime.now().strftime("%Y-%m-%d")
+    field = f"{action}_chat_ids"
+
     try:
+        old_stats = await daily_statsdb.find_one({"date": today}) or {}
+
+        update = {
+            "$setOnInsert": {
+                "date": today,
+                "added_chat_ids": [],
+                "removed_chat_ids": [],
+            },
+            "$addToSet": {
+                field: int(chat_id),
+            },
+        }
+
+        # Preserve old $inc-based counters that may already exist today.
+        if action not in old_stats and old_stats.get(action):
+            update["$set"] = {
+                f"legacy_{action}": int(old_stats.get(action, 0))
+            }
+
         await daily_statsdb.update_one(
             {"date": today},
-            {
-                "$inc": {action: 1},
-                "$setOnInsert": {"date": today},
-            },
+            update,
             upsert=True,
         )
     except Exception:
-        # A statistics failure must not stop the actual join/leave logger.
-        LOGGER.warning("Could not update daily group statistics", exc_info=True)
-
+        # Stats failure must not stop group add/remove logging.
+        LOGGER.warning(
+            "Could not update daily group statistics",
+            exc_info=True,
+        )
 
 @app.on_chat_member_updated(filters.group, group=1)
 async def auto_group_logger(client: Client, message: ChatMemberUpdated):
@@ -242,7 +265,7 @@ async def auto_group_logger(client: Client, message: ChatMemberUpdated):
         action_by = message.from_user
 
         if was_added:
-            await _record_daily_activity("added")
+            await _record_daily_activity("added", chat.id)
             # The welcome handler also performs this operation, but the
             # database helper is idempotent and this keeps BData correct even
             # if the welcome handler was skipped.
@@ -251,7 +274,7 @@ async def auto_group_logger(client: Client, message: ChatMemberUpdated):
             except Exception:
                 LOGGER.warning("Could not save newly joined chat", exc_info=True)
         else:
-            await _record_daily_activity("removed")
+            await _record_daily_activity("removed", chat.id)
             try:
                 await delete_served_chat(chat.id)
             except Exception:
