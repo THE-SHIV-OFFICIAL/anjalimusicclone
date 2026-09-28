@@ -29,20 +29,30 @@ POWERED_BY = "🤞 **𝐏ᴏᴡєʀєᴅ 𝐁ʏ ➛ BETA BOTS.🙂❤️**"
 daily_statsdb = mongodb["daily_stats"]
 
 async def get_today_stats():
-    """Fetches today's joined/left count AND auto-cleans old data to save storage."""
     today = datetime.now().strftime("%Y-%m-%d")
-    
-    # 🧹 AUTO CLEANUP: Aaj ki date ke alawa jitne bhi purane records hain, unko delete kar dega
+
     try:
         await daily_statsdb.delete_many({"date": {"$ne": today}})
     except Exception:
         pass
-        
-    stats = await daily_statsdb.find_one({"date": today})
-    if stats:
-        return stats.get("added", 0), stats.get("removed", 0)
-    return 0, 0
 
+    stats = await daily_statsdb.find_one({"date": today}) or {}
+
+    added_chat_ids = stats.get("added_chat_ids", [])
+    removed_chat_ids = stats.get("removed_chat_ids", [])
+
+    # Old numeric counters ko bhi preserve karta hai.
+    old_added = int(
+        stats.get("legacy_added", stats.get("added", 0)) or 0
+    )
+    old_removed = int(
+        stats.get("legacy_removed", stats.get("removed", 0)) or 0
+    )
+
+    added_today = len(set(added_chat_ids)) + old_added
+    removed_today = len(set(removed_chat_ids)) + old_removed
+
+    return added_today, removed_today
 
 # --- HELPERS ---
 async def get_chat_link(chat_id: int) -> str:
